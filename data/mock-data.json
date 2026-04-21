@@ -1,0 +1,23 @@
+{
+  "rewards": [
+    { "id": 1, "title": "Cafe americano gratis", "brand": "Cafe del Bosque", "cost": 250, "image": "☕", "category": "Bebida" },
+    { "id": 2, "title": "20% en toda la tienda", "brand": "Modas Norte", "cost": 800, "image": "🛍️", "category": "Descuento" },
+    { "id": 3, "title": "Postre gratis con tu comida", "brand": "La Trattoria", "cost": 600, "image": "🍰", "category": "Comida" },
+    { "id": 4, "title": "Corte de cabello + barba", "brand": "Barber Co.", "cost": 1500, "image": "💈", "category": "Servicio" }
+  ],
+  "promotions": [
+    { "id": 1, "title": "Doble puntos los martes", "brand": "Cafe del Bosque", "expires": "Cada martes", "color": "primary" },
+    { "id": 2, "title": "30% en toda la carta", "brand": "La Trattoria", "expires": "Hasta domingo", "color": "accent" },
+    { "id": 3, "title": "2x1 en cervezas", "brand": "Beer Garden", "expires": "Viernes 9pm-12am", "color": "gold" }
+  ],
+  "transactions": [
+    { "id": 1, "brand": "Cafe del Bosque", "amount": 145, "points": 14, "date": "Hoy, 09:32", "type": "earn" },
+    { "id": 2, "brand": "Modas Norte", "amount": 0, "points": -800, "date": "Ayer, 18:14", "type": "redeem", "reward": "20% descuento" },
+    { "id": 3, "brand": "La Trattoria", "amount": 520, "points": 52, "date": "12 Abr", "type": "earn" }
+  ],
+  "nearbyBrands": [
+    { "id": 1, "name": "Cafe del Bosque", "category": "Cafeteria", "distance": "0.3 km", "emoji": "☕" },
+    { "id": 2, "name": "La Trattoria", "category": "Italiana", "distance": "0.8 km", "emoji": "🍝" },
+    { "id": 3, "name": "Modas Norte", "category": "Moda", "distance": "1.2 km", "emoji": "👗" }
+  ]
+}
