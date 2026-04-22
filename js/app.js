@@ -1,4 +1,5 @@
-import { restoreUser, signIn, signOut, signUp } from "./services/auth.js";
+import { restoreUser, signIn, signOut, signUp, saveUser, updatePointsInSupabase, getToken } from "./services/auth.js";
+import { ADMIN_EMAIL } from "./config.js";
 
 const state = {
   user: restoreUser(),
@@ -12,10 +13,93 @@ const bottomNav = document.getElementById("bottom-nav");
 async function loadData() {
   const response = await fetch("./data/mock-data.json");
   state.data = await response.json();
+  const saved = loadPromos();
+  if (saved) state.data.promotions = saved;
 }
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+
+function isAdmin() {
+  return state.user?.email === ADMIN_EMAIL;
+}
+
+function loadPromos() {
+  try {
+    const saved = localStorage.getItem("luci_promos");
+    return saved ? JSON.parse(saved) : null;
+  } catch { return null; }
+}
+function getPointsStore() {
+  try { return JSON.parse(localStorage.getItem("luci_points_store") || "{}"); }
+  catch { return {}; }
+}
+
+function setPointsStore(store) {
+  localStorage.setItem("luci_points_store", JSON.stringify(store));
+}
+
+async function assignPoints(memberKey, amount) {
+  const token = getToken();
+
+  // Leer puntos actuales
+  const res = await fetch(
+    `${config.supabaseUrl}/rest/v1/profiles?member_key=eq.${memberKey}&limit=1`,
+    {
+      headers: {
+        apikey: config.supabasePublishableKey,
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json"
+      }
+    }
+  );
+  const rows = await res.json();
+  if (!rows?.length) throw new Error("Usuario no encontrado");
+
+  const current = rows[0];
+  const newPoints = (current.points || 0) + amount;
+  const newLifetime = (current.lifetime_points || 0) + amount;
+
+  // Actualizar en Supabase
+  const patch = await fetch(
+    `${config.supabaseUrl}/rest/v1/profiles?member_key=eq.${memberKey}`,
+    {
+      method: "PATCH",
+      headers: {
+        apikey: config.supabasePublishableKey,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal"
+      },
+      body: JSON.stringify({ points: newPoints, lifetime_points: newLifetime })
+    }
+  );
+  if (!patch.ok) throw new Error(`Error al asignar puntos (${patch.status})`);
+}
+
+async function mergeUserPoints() {
+  if (!state.user) return;
+  const store = getPointsStore();
+  const pending = store[state.user.memberKey] || 0;
+  if (pending === 0) return;
+  state.user.points += pending;
+  state.user.lifetimePoints += pending;
+  delete store[state.user.memberKey];
+  setPointsStore(store);
+  saveUser(state.user);
+  await updatePointsInSupabase(state.user.points, state.user.lifetimePoints);
+}
+
+let qrScanner = null;
+
+function stopScanner() {
+  if (qrScanner) { qrScanner.stop().catch(() => {}); qrScanner = null; }
+}
+
+function savePromos(promos) {
+  localStorage.setItem("luci_promos", JSON.stringify(promos));
+  state.data.promotions = promos;
 }
 
 function renderAuth() {
@@ -51,6 +135,7 @@ function renderAuth() {
     const fd = new FormData(e.currentTarget);
     try {
       state.user = await signIn(fd.get("email"), fd.get("password"));
+      mergeUserPoints();
       render();
     } catch (err) {
       errorBox.textContent = err.message;
@@ -141,6 +226,7 @@ function renderHome() {
         <span class="tier-pill">${esc(state.user.tier)}</span>
       </div>
       <div class="code-box">${esc(state.user.memberKey)}</div>
+      <div id="member-qr" class="qr-box"></div>
       <div class="points-wrap">
         <p class="tiny">Puntos disponibles</p>
         <p class="points-number">${esc(state.user.points)}</p>
@@ -262,9 +348,128 @@ function renderPerfil() {
   `;
 }
 
+function renderAdmin() {
+  bottomNav.classList.add("hidden");
+  stopScanner();
+  const promos = state.data.promotions;
+  const list = promos.map((p, i) => `
+    <li>
+      <div>
+        <strong>${esc(p.title)}</strong>
+        <div class="item-meta">${esc(p.brand)} · ${esc(p.expires)}</div>
+      </div>
+      <button class="danger small" data-del="${i}">✕</button>
+    </li>`).join("");
+
+  content.innerHTML = `
+    <section class="card pad">
+      <p class="tiny">Panel</p>
+      <h2 class="title">Admin 🛠️</h2>
+      <p class="subtle">${esc(state.user.email)}</p>
+      <button id="logout-btn" class="danger">Cerrar sesion</button>
+    </section>
+    <section class="card pad">
+      <h3>Asignar puntos</h3>
+      <div id="scanner-wrap">
+        <button id="btn-scan">📷 Escanear QR de usuario</button>
+      </div>
+      <div id="qr-reader" style="width:100%;display:none;"></div>
+      <div id="scan-result" class="hidden">
+        <p class="subtle" id="scan-key"></p>
+        <input id="pts-amount" type="number" placeholder="Cantidad de puntos" min="1" />
+        <button id="btn-assign">Asignar puntos</button>
+        <p id="assign-msg" class="subtle"></p>
+      </div>
+    </section>
+    <section class="card pad">
+      <h3>Agregar oferta</h3>
+      <input id="adm-title" placeholder="Titulo de la oferta" />
+      <input id="adm-brand" placeholder="Marca / Negocio" />
+      <input id="adm-expires" placeholder="Vigencia (ej: Hasta domingo)" />
+      <button id="adm-add">Agregar oferta</button>
+    </section>
+    <section class="card pad">
+      <h3>Ofertas activas</h3>
+      <ul class="list" id="adm-list">${list || "<li><span class='subtle'>Sin ofertas.</span></li>"}</ul>
+    </section>
+  `;
+
+  let scannedKey = null;
+
+  document.getElementById("btn-scan").addEventListener("click", () => {
+  document.getElementById("qr-reader").style.display = "block";
+  document.getElementById("scan-result").classList.add("hidden");
+  scannedKey = null;
+
+  Html5Qrcode.getCameras().then(cameras => {
+  if (!cameras.length) throw new Error("Sin camaras disponibles");
+  qrScanner = new Html5Qrcode("qr-reader");
+  return qrScanner.start(
+    cameras[0].id,
+    { fps: 10, qrbox: { width: 200, height: 200 } },
+    (text) => {
+      stopScanner();
+      document.getElementById("qr-reader").style.display = "none";
+      scannedKey = text;
+      document.getElementById("scan-key").textContent = `Clave: ${text}`;
+      document.getElementById("scan-result").classList.remove("hidden");
+      document.getElementById("assign-msg").textContent = "";
+    },
+    () => {}
+  );
+}).catch((err) => {
+  document.getElementById("qr-reader").style.display = "none";
+  document.getElementById("scan-key").textContent = `Error: ${err}`;
+  document.getElementById("scan-result").classList.remove("hidden");
+});
+  });
+
+  document.getElementById("btn-assign").addEventListener("click", async () => {
+  const amount = parseInt(document.getElementById("pts-amount").value, 10);
+  if (!scannedKey || !amount || amount < 1) return;
+  try {
+    await assignPoints(scannedKey, amount);
+    document.getElementById("assign-msg").textContent = `✅ ${amount} puntos asignados a ${scannedKey}`;
+    document.getElementById("pts-amount").value = "";
+  } catch (err) {
+    document.getElementById("assign-msg").textContent = `❌ ${err.message}`;
+  }
+});
+
+  document.getElementById("adm-add").addEventListener("click", () => {
+    const title = document.getElementById("adm-title").value.trim();
+    const brand = document.getElementById("adm-brand").value.trim();
+    const expires = document.getElementById("adm-expires").value.trim();
+    if (!title || !brand) return;
+    savePromos([...state.data.promotions, { id: Date.now(), title, brand, expires, color: "primary" }]);
+    render();
+  });
+
+  document.getElementById("adm-list").addEventListener("click", (e) => {
+    const idx = e.target.dataset.del;
+    if (idx === undefined) return;
+    savePromos(state.data.promotions.filter((_, i) => i !== Number(idx)));
+    render();
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", () => {
+    signOut(); state.user = null; render();
+  });
+}
+
 function renderApp() {
   renderNav();
-  if (state.tab === "home") content.innerHTML = renderHome();
+  if (state.tab === "home") {
+  content.innerHTML = renderHome();
+  new QRCode(document.getElementById("member-qr"), {
+    text: state.user.memberKey,
+    width: 148,
+    height: 148,
+    colorDark: "#000000",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.M
+  });
+}
   if (state.tab === "wallet") content.innerHTML = renderWallet();
   if (state.tab === "promos") content.innerHTML = renderPromos();
   if (state.tab === "perfil") content.innerHTML = renderPerfil();
@@ -282,12 +487,14 @@ function renderApp() {
 
 function render() {
   if (!state.user) renderAuth();
+  else if (isAdmin()) renderAdmin();
   else renderApp();
 }
 
+
 async function bootstrap() {
   await loadData();
+  try { await mergeUserPoints(); } catch {}
   render();
 }
-
 bootstrap();
